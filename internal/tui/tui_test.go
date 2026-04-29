@@ -22,17 +22,17 @@ func TestItem_Title(t *testing.T) {
 		{
 			name:     "default",
 			item:     item{name: "test", default_: true},
-			expected: "* test",
+			expected: "● test",
 		},
 		{
 			name:     "loaded",
 			item:     item{name: "test", loaded: true},
-			expected: "  test [loaded]",
+			expected: "  test (loaded)",
 		},
 		{
 			name:     "default and loaded",
 			item:     item{name: "test", default_: true, loaded: true},
-			expected: "* test [loaded]",
+			expected: "● test (loaded)",
 		},
 	}
 
@@ -135,8 +135,8 @@ func TestModelUpdateWindowSize(t *testing.T) {
 		t.Error("expected nil cmd")
 	}
 	m := updated.(Model)
-	if m.width != 100 || m.height != 30 {
-		t.Errorf("expected 100x30, got %dx%d", m.width, m.height)
+	if m.width != 50 || m.height != 30 {
+		t.Errorf("expected 50x30, got %dx%d", m.width, m.height)
 	}
 }
 

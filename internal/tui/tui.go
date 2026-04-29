@@ -13,6 +13,10 @@ import (
 	"github.com/greatbody/envman/internal/shell"
 )
 
+const (
+	maxWidth = 50
+)
+
 type state int
 
 const (
@@ -24,41 +28,41 @@ const (
 )
 
 type item struct {
-	name    string
-	loaded  bool
+	name     string
+	loaded   bool
 	default_ bool
 }
 
 func (i item) Title() string {
 	marker := "  "
 	if i.default_ {
-		marker = "* "
+		marker = "● "
 	}
 	suffix := ""
 	if i.loaded {
-		suffix = " [loaded]"
+		suffix = " " + lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("(loaded)")
 	}
-	return fmt.Sprintf("%s%s%s", marker, i.name, suffix)
+	return marker + i.name + suffix
 }
 
 func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return i.name }
 
 type Model struct {
-	list         list.Model
-	state        state
-	names        []string
-	defaultName  string
-	loaded       string
-	cfgMgr       *config.Manager
-	profileMgr   *profile.Manager
-	selected     string
-	LoadOutput   string
-	textInput    textinput.Model
-	confirmDel   string
-	err          error
-	width        int
-	height       int
+	list       list.Model
+	state      state
+	names      []string
+	defaultName string
+	loaded     string
+	cfgMgr     *config.Manager
+	profileMgr *profile.Manager
+	selected   string
+	LoadOutput string
+	textInput  textinput.Model
+	confirmDel string
+	err        error
+	width      int
+	height     int
 }
 
 func NewModel(names []string, defaultName, loaded string, cfgMgr *config.Manager, profileMgr *profile.Manager) Model {
@@ -78,27 +82,38 @@ func NewModel(names []string, defaultName, loaded string, cfgMgr *config.Manager
 		}
 	}
 
-	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	l.Title = "envman profiles"
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("250"))
+	delegate.Styles.NormalDesc = delegate.Styles.NormalDesc.Foreground(lipgloss.Color("240"))
+	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(lipgloss.Color("170")).BorderLeft(true).BorderForeground(lipgloss.Color("170"))
+	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.Foreground(lipgloss.Color("170"))
+
+	l := list.New(items, delegate, maxWidth, 0)
+	l.Title = "envman"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
+	l.SetShowTitle(true)
+	l.Styles.Title = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("170")).
+		PaddingRight(1)
 
 	ti := textinput.New()
 	ti.Placeholder = "profile name"
 	ti.Focus()
 
 	return Model{
-		list:        l,
-		state:       stateList,
-		names:       names,
+		list:       l,
+		state:      stateList,
+		names:      names,
 		defaultName: defaultName,
-		loaded:      loaded,
-		cfgMgr:      cfgMgr,
-		profileMgr:  profileMgr,
-		textInput:   ti,
-		width:       80,
-		height:      24,
+		loaded:     loaded,
+		cfgMgr:     cfgMgr,
+		profileMgr: profileMgr,
+		textInput:  ti,
+		width:      maxWidth,
+		height:     20,
 	}
 }
 
@@ -109,10 +124,10 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width = min(msg.Width, maxWidth)
 		m.height = msg.Height
-		m.list.SetWidth(msg.Width)
-		m.list.SetHeight(msg.Height - 4)
+		m.list.SetWidth(m.width)
+		m.list.SetHeight(min(msg.Height-4, len(m.names)+2))
 		return m, nil
 
 	case tea.KeyMsg:
@@ -123,9 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCreate(msg)
 		case stateConfirmDelete:
 			return m.updateConfirmDelete(msg)
-		case stateView:
-			return m.updateView(msg)
-		case stateDiff:
+		case stateView, stateDiff:
 			return m.updateView(msg)
 		}
 	}
@@ -139,23 +152,23 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "s":
-		item, ok := m.list.SelectedItem().(item)
+		selected, ok := m.list.SelectedItem().(item)
 		if ok {
-			m.defaultName = item.name
-			m.cfgMgr.SetDefaultProfile(item.name)
+			m.defaultName = selected.name
+			m.cfgMgr.SetDefaultProfile(selected.name)
 			m.refreshList()
 		}
 		return m, nil
 
 	case "l":
-		item, ok := m.list.SelectedItem().(item)
+		selected, ok := m.list.SelectedItem().(item)
 		if ok {
-			p, err := m.profileMgr.Load(item.name)
+			p, err := m.profileMgr.Load(selected.name)
 			if err != nil {
 				m.err = err
 				return m, nil
 			}
-			m.LoadOutput = shell.ExportWithTracking(p.Vars, item.name, m.loaded)
+			m.LoadOutput = shell.ExportWithTracking(p.Vars, selected.name, m.loaded)
 			return m, tea.Quit
 		}
 		return m, nil
@@ -167,33 +180,33 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case "d":
-		item, ok := m.list.SelectedItem().(item)
+		selected, ok := m.list.SelectedItem().(item)
 		if ok {
-			if item.name == m.defaultName {
+			if selected.name == m.defaultName {
 				m.err = fmt.Errorf("cannot delete default profile")
 				return m, nil
 			}
 			m.state = stateConfirmDelete
-			m.confirmDel = item.name
+			m.confirmDel = selected.name
 		}
 		return m, nil
 
 	case "v":
-		item, ok := m.list.SelectedItem().(item)
+		selected, ok := m.list.SelectedItem().(item)
 		if ok {
-			m.selected = item.name
+			m.selected = selected.name
 			m.state = stateView
 		}
 		return m, nil
 
 	case "c":
-		item, ok := m.list.SelectedItem().(item)
+		selected, ok := m.list.SelectedItem().(item)
 		if ok {
-			dst := item.name + "-copy"
+			dst := selected.name + "-copy"
 			if m.profileMgr.Exists(dst) {
 				dst = dst + "-1"
 			}
-			m.profileMgr.Copy(item.name, dst)
+			m.profileMgr.Copy(selected.name, dst)
 			m.names = append(m.names, dst)
 			m.refreshList()
 		}
@@ -297,70 +310,111 @@ func (m Model) View() string {
 func (m Model) viewList() string {
 	var b strings.Builder
 	b.WriteString(m.list.View())
-	b.WriteString("\n")
 
 	if m.err != nil {
-		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-		b.WriteString(errStyle.Render(fmt.Sprintf("Error: %v", m.err)))
 		b.WriteString("\n")
+		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+		b.WriteString(errStyle.Render(fmt.Sprintf("  %v", m.err)))
 		m.err = nil
 	}
 
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	b.WriteString(helpStyle.Render("[s] set default  [l] load  [n] new  [d] delete  [v] view  [c] copy  [D] diff  [q] quit"))
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).PaddingLeft(1)
 	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("s:set  l:load  n:new  d:del  v:view  c:copy  q:quit"))
 
 	return b.String()
 }
 
 func (m Model) viewCreate() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	return fmt.Sprintf("\n%s\n\n%s\n\n%s\n",
-		titleStyle.Render("Create new profile"),
-		m.textInput.View(),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("[enter] create  [esc] cancel"),
-	)
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("170")).
+		PaddingLeft(1)
+
+	promptStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).PaddingLeft(1)
+
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(titleStyle.Render("Create profile"))
+	b.WriteString("\n\n")
+	b.WriteString("  ")
+	b.WriteString(m.textInput.View())
+	b.WriteString("\n\n")
+	b.WriteString(promptStyle.Render("enter:create  esc:cancel"))
+
+	return b.String()
 }
 
 func (m Model) viewConfirmDelete() string {
-	warnStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
-	return fmt.Sprintf("\n%s\n\n%s\n",
-		warnStyle.Render(fmt.Sprintf("Delete profile '%s'?", m.confirmDel)),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("[y] yes  [n] no"),
-	)
+	warnStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("1")).
+		PaddingLeft(1)
+
+	promptStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).PaddingLeft(1)
+
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(warnStyle.Render(fmt.Sprintf("Delete '%s'?", m.confirmDel)))
+	b.WriteString("\n\n")
+	b.WriteString(promptStyle.Render("y:yes  n:no"))
+
+	return b.String()
 }
 
 func (m Model) viewProfile() string {
 	p, err := m.profileMgr.Load(m.selected)
 	if err != nil {
-		return fmt.Sprintf("Error loading profile: %v", err)
+		return fmt.Sprintf("Error: %v", err)
 	}
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("170")).
+		PaddingLeft(1)
+
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("178")).PaddingLeft(3)
+	valStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).PaddingLeft(0)
+
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n%s\n\n", titleStyle.Render(fmt.Sprintf("Profile: %s", m.selected))))
+	b.WriteString("\n")
+	b.WriteString(titleStyle.Render(m.selected))
+	b.WriteString("\n\n")
 
 	if len(p.Vars) == 0 {
-		b.WriteString("  (empty)\n")
+		b.WriteString("  (empty)")
 	} else {
 		for _, v := range p.Vars {
-			b.WriteString(fmt.Sprintf("  %s = %s\n", v.Key, v.Value))
+			b.WriteString(keyStyle.Render(v.Key))
+			b.WriteString(valStyle.Render(" = " + v.Value))
+			b.WriteString("\n")
 		}
 	}
 
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).PaddingLeft(1)
 	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("[esc] back"))
-	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("esc:back"))
 
 	return b.String()
 }
 
 func (m Model) viewDiff() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	return fmt.Sprintf("\n%s\n\nSelect two profiles to diff (not yet implemented in TUI).\nUse: envman diff <a> <b>\n\n%s\n",
-		titleStyle.Render("Diff Profiles"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("[esc] back"),
-	)
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("170")).
+		PaddingLeft(1)
+
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).PaddingLeft(1)
+
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(titleStyle.Render("Diff"))
+	b.WriteString("\n\n")
+	b.WriteString("  Use: envman diff <a> <b>")
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render("esc:back"))
+
+	return b.String()
 }
 
 func (m *Model) refreshList() {
@@ -391,4 +445,11 @@ func splitComma(s string) []string {
 		}
 	}
 	return result
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
